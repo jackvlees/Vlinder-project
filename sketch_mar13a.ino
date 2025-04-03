@@ -1,14 +1,14 @@
 /*
   Vlinder MKR Arduino MQTT communication
-  V7 13/03/25 - Improved Arduino-compatible version with float formatting fix
-  Updated: No dummy values, sends 0 when no measurements are available
+  V8 03/04/25 - Verbeterde versie met robuuste modembeheer en foutafhandeling
 */
 
 #define DEBUG 1          // Debug mode: 1 = on, 0 = off
 #define BLACKGLOBE 0     // BlackGlobe mode: 1 = on, 0 = off
+#define MODEM_POWER_PIN 7 // Pin voor hardwarematige power cycling (optioneel)
 
 #include <MKRNB.h>
-#include "keys.h"
+#include "keys.h"        // Bevat VLINDERNR en DEVICE_ID
 #include <Arduino_MKRENV.h>
 #include <ArduinoRS485.h>
 #include <SPI.h>
@@ -18,17 +18,17 @@
 #include <Adafruit_MCP9600.h>
 #endif
 
-// Constants
+// Constanten
 const uint8_t I2C_ADDRESS = 0x67;
-const uint8_t SETUP_LED = 6;
 const uint8_t SD_CS_PIN = 4;
-const uint16_t SEND_INTERVAL = 30;  // Seconds between data transmissions
+const uint16_t SEND_INTERVAL = 30;  // Seconden tussen datatransmissies
 const char* MQTT_SERVER = "mqtt.iot-ap.be";
 const uint16_t MQTT_PORT = 1883;
 const char* MQTT_USER = "";
 const char* MQTT_PASSWORD = "";
+const uint32_t WATCHDOG_TIMEOUT = 300000; // 5 minuten watchdog timeout
 
-// Hardware objects
+// Hardware-objecten
 NB nbAccess;
 GPRS gprs;
 NBClient nbClient;
@@ -38,7 +38,7 @@ Adafruit_MCP9600 mcp;
 #endif
 File dataFile;
 
-// Weather data structure
+// Weergegevensstructuur
 struct WeatherData {
   float temperature;
   float humidity;
@@ -66,36 +66,58 @@ struct WeatherData {
   int windDirHistogram[36];
 };
 
-// Global variables
-WeatherData weather = {0};  // Initialize all to zero
+// Globale variabelen
+WeatherData weather = {0};  // Alles initialiseren op nul
 unsigned long previousMillis = 0;
 unsigned long lastSuccess = 0;
 unsigned char wxdata[8] = {0};
 uint32_t timestamp = 0;
 
-void flashLED(uint8_t times, uint16_t duration) {
-  for (uint8_t i = 0; i < times; i++) {
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(duration);
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(duration);
-  }
+
+
+#ifdef MODEM_POWER_PIN
+void powerCycleModem() {
+  digitalWrite(MODEM_POWER_PIN, LOW);
+  delay(1000);
+  digitalWrite(MODEM_POWER_PIN, HIGH);
+  delay(5000); // Wacht op modem reboot
 }
+#endif
 
 boolean startNetwork() {
+  const uint8_t MAX_RETRIES = 5;
+  uint8_t retries = 0;
+
 #if DEBUG
   Serial.println("Initializing network...");
 #endif
-  if (nbAccess.begin() != NB_READY || gprs.attachGPRS() != GPRS_READY) {
+  while (retries < MAX_RETRIES) {
+    if (nbAccess.begin() == NB_READY && gprs.attachGPRS() == GPRS_READY) {
 #if DEBUG
-    Serial.println("Network connection failed!");
+      Serial.println("Network connected successfully!");
 #endif
-    return false;
+      return true;
+    }
+    retries++;
+    delay(5000);
   }
+
+#ifdef MODEM_POWER_PIN
+  // Power cycle als laatste redmiddel
 #if DEBUG
-  Serial.println("Network connected successfully!");
+  Serial.println("Max retries exceeded, power cycling modem...");
 #endif
-  return true;
+  powerCycleModem();
+  if (nbAccess.begin() == NB_READY && gprs.attachGPRS() == GPRS_READY) {
+    return true;
+  }
+#endif
+
+#if DEBUG
+  Serial.println("Network connection failed after retries, resetting system...");
+#endif
+  NVIC_SystemReset();
+  return false; // Onbereikbaar, maar voor volledigheid
 }
 
 void ensureNetworkConnection() {
@@ -104,10 +126,19 @@ void ensureNetworkConnection() {
     Serial.println("Network lost, restarting modem...");
 #endif
     nbAccess.shutdown();
-    while (!startNetwork()) {
-      flashLED(10, 200);
-      delay(5000);
+    uint16_t delayTime = 5000;
+    for (uint8_t i = 0; i < 5; i++) {
+      if (startNetwork()) return;
+      dataFile = SD.open("error.log", FILE_WRITE);
+      if (dataFile) {
+        dataFile.print(nbAccess.getTime());
+        dataFile.println(",Network failure");
+        dataFile.close();
+      }
+      delay(delayTime);
+      delayTime *= 2; // Exponentiële backoff: 5s, 10s, 20s, 40s, 80s
     }
+    NVIC_SystemReset();
   }
 }
 
@@ -140,14 +171,35 @@ boolean connectMQTT() {
 #if DEBUG
   Serial.println("MQTT connection failed after max attempts");
 #endif
+  dataFile = SD.open("error.log", FILE_WRITE);
+  if (dataFile) {
+    dataFile.print(nbAccess.getTime());
+    dataFile.println(",MQTT failure");
+    dataFile.close();
+  }
   return false;
+}
+
+void checkModemHealth() {
+  if (!nbAccess.isAccessAlive()) {
+#if DEBUG
+    Serial.println("Modem not responding, restarting...");
+#endif
+    nbAccess.shutdown();
+    while (!startNetwork()) {
+      delay(5000);
+    }
+    connectMQTT();
+  }
 }
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(SETUP_LED, OUTPUT);
-  digitalWrite(SETUP_LED, LOW);
-  flashLED(3, 1000);
+#ifdef MODEM_POWER_PIN
+  pinMode(MODEM_POWER_PIN, OUTPUT);
+  digitalWrite(MODEM_POWER_PIN, HIGH); // Modem aanzetten
+#endif
+ 
 
 #if DEBUG
   Serial.begin(9600);
@@ -156,7 +208,6 @@ void setup() {
 #endif
 
   while (!startNetwork()) {
-    flashLED(10, 200);
     delay(5000);
   }
 
@@ -170,7 +221,7 @@ void setup() {
 #if DEBUG
     Serial.println("MKR ENV shield initialization failed!");
 #endif
-    while (1) flashLED(5, 200);
+    while (1) ;
   }
 
 #if BLACKGLOBE
@@ -178,7 +229,7 @@ void setup() {
 #if DEBUG
     Serial.println("MCP9600 initialization failed!");
 #endif
-    while (1) flashLED(7, 100);
+    while (1) ;
   }
   mcp.setADCresolution(MCP9600_ADCRESOLUTION_18);
   mcp.setThermocoupleType(MCP9600_TYPE_K);
@@ -192,7 +243,7 @@ void setup() {
 #if DEBUG
     Serial.println("SD card initialization failed!");
 #endif
-    while (1) flashLED(3, 200);
+    while (1);
   }
 
   dataFile = SD.open(VLINDERNR, FILE_WRITE);
@@ -204,14 +255,14 @@ void setup() {
 #if DEBUG
   Serial.println("Setup completed!");
 #endif
-  digitalWrite(SETUP_LED, HIGH);
+
 }
 
 void publishMQTT(const char* sensor, float value) {
   char topic[50];
   char payload[10];
   sprintf(topic, "%s/%s", DEVICE_ID, sensor);
-  sprintf(payload, "%.2f", value);  // Using sprintf with float format specifier
+  sprintf(payload, "%.2f", value);
   mqttClient.publish(topic, payload);
 #if DEBUG
   Serial.print("MQTT Publish - ");
@@ -241,7 +292,7 @@ void processWeatherData() {
   for (uint8_t i = 0; i < 6; i++) {
     wxdata[i] = RS485.read();
   }
-  flashLED(1, 30);
+
 
   float windDir = (wxdata[2] * 359.0 / 255.0);
   int index = round(windDir / 10) - 1;
@@ -311,7 +362,7 @@ void transmitData() {
 #if BLACKGLOBE
     weather.averages.blackGlobe = weather.averages.sumBlackGlobe / weather.averages.readings;
 #else
-    weather.averages.blackGlobe = 0; // Set to 0 if BLACKGLOBE is off
+    weather.averages.blackGlobe = 0;
 #endif
   } else {
     weather.averages.temp = 0;
@@ -331,7 +382,7 @@ void transmitData() {
       maxIndex = i;
     }
   }
-  weather.windDirection = (maxCount > 0) ? (maxIndex * 10) + 5 : 0; // 0 if no wind direction data
+  weather.windDirection = (maxCount > 0) ? (maxIndex * 10) + 5 : 0;
 
   weather.pressure = ENV.readPressure(MILLIBAR) * 100;
   timestamp = nbAccess.getTime();
@@ -397,8 +448,9 @@ void transmitData() {
 void loop() {
   if (!mqttClient.connected()) connectMQTT();
   mqttClient.loop();
+  checkModemHealth();
 
-  if (millis() - lastSuccess > 60000) {
+  if (millis() - lastSuccess > WATCHDOG_TIMEOUT) {
 #if DEBUG
     Serial.println("Watchdog timeout, resetting...");
 #endif
