@@ -339,53 +339,65 @@ bool ensureMqttConnected() {  // Probeer verbinding te maken of opnieuw te verbi
 }
 
 void setup() {
-  // Start seriële communicatie voor debugging alleen als DEBUG is ingeschakeld
-#if DEBUG
-  Serial.begin(115200);
-  while (!Serial);  // Wacht tot seriële poort klaar is
-  Serial.println("Setup gestart...");
-#endif
+  // Wacht op hardwarestabilisatie
+  delay(5000);
+
+  #if DEBUG
+    Serial.begin(115200);
+    while (!Serial);  // Wacht tot seriële poort klaar is
+    Serial.println("Setup gestart...");
+  #endif
+
+  // Initialiseer watchdog
+  esp_task_wdt_init(10, true); // 10 seconden timeout
+  esp_task_wdt_add(NULL);
 
   esp_read_mac(incomingBuf, ESP_MAC_WIFI_STA);
   sprintf(macString, "walter%02X:%02X:%02X:%02X:%02X:%02X", incomingBuf[0],
           incomingBuf[1], incomingBuf[2], incomingBuf[3], incomingBuf[4],
           incomingBuf[5]);
 
-  if (WalterModem::begin(&Serial2)) {
-#if DEBUG
-    Serial.println("Modem initialization OK");
-#endif
+  // Modem initialisatie met retry-logica
+  int modemRetries = 0;
+  while (!WalterModem::begin(&Serial2) && modemRetries < 3) {
+    #if DEBUG
+      Serial.println("Modem initialisatie mislukt, opnieuw proberen...");
+    #endif
+    delay(2000);
+    modemRetries++;
+  }
+  if (modemRetries >= 3) {
+    #if DEBUG
+      Serial.println("Modem initialisatie mislukt, herstart apparaat...");
+    #endif
+    restartDevice();
+  }
+
+  if (!lteConnect()) {
+    #if DEBUG
+      Serial.println("Error: Could Not Connect to LTE");
+    #endif
+    restartDevice();
+  }
+
+  if (modem.mqttConfig("em7IYh75xhnrEI7OTkr03FWm")) {
+    #if DEBUG
+      Serial.println("MQTT configuration succeeded");
+    #endif
   } else {
-#if DEBUG
-    Serial.println("Error: Modem initialization ERROR");
-#endif
-    return;
+    #if DEBUG
+      Serial.println("Error: MQTT configuration failed");
+    #endif
+    restartDevice();
   }
 
-  if (!lteConnect()) {  // Verbind met LTE-netwerk
-#if DEBUG
-    Serial.println("Error: Could Not Connect to LTE");
-#endif
-    return;
+  if (!ensureMqttConnected()) {
+    #if DEBUG
+      Serial.println("Error: Initial MQTT connection failed");
+    #endif
+    restartDevice();
   }
 
-  if (modem.mqttConfig("em7IYh75xhnrEI7OTkr03FWm")) {  // Configureer MQTT-client
-#if DEBUG
-    Serial.println("MQTT configuration succeeded");
-#endif
-  } else {
-#if DEBUG
-    Serial.println("Error: MQTT configuration failed");
-#endif
-    return;
-  }
-
-  if (!ensureMqttConnected()) {  // Verbind met MQTT-broker
-#if DEBUG
-    Serial.println("Error: Initial MQTT connection failed");
-#endif
-    return;
-  }
   randomSeed(analogRead(0));  // Initialiseer random seed
 
   // Start I2C
@@ -393,42 +405,50 @@ void setup() {
 
   // Start HardwareSerial voor RS485
   RS485Serial.begin(4800, SERIAL_8N1, RX_PIN, TX_PIN);
-#if DEBUG
-  Serial.println("RS485Serial gestart op 4800 baud");
-#endif
+  #if DEBUG
+    Serial.println("RS485Serial gestart op 4800 baud");
+  #endif
 
   // Stel DE/RE-pin in als uitvoer
   pinMode(DE_RE_PIN, OUTPUT);
   digitalWrite(DE_RE_PIN, LOW);  // Zet in ontvangstmodus
-#if DEBUG
-  Serial.println("RS485 in ontvangstmodus");
-#endif
+  #if DEBUG
+    Serial.println("RS485 in ontvangstmodus");
+  #endif
 
+  // Probeer BME280 te initialiseren
   if (!bme.begin(BME280_ADDRESS)) {
-#if DEBUG
-    Serial.println("BME280 niet gevonden! Controleer bedrading of I2C-adres.");
-    Serial.println("Probeer adres 0x76 als 0x77 niet werkt.");
-#endif
-    while (1);  // Stop bij fout
+    #if DEBUG
+      Serial.println("BME280 niet gevonden! Probeer opnieuw...");
+    #endif
+    delay(2000);
+    if (!bme.begin(BME280_ADDRESS)) {
+      #if DEBUG
+        Serial.println("BME280 initialisatie mislukt, ga verder zonder sensor.");
+      #endif
+    }
+  } else {
+    #if DEBUG
+      Serial.println("BME280 succesvol geïnitialiseerd!");
+    #endif
+    bme.setSampling(Adafruit_BME280::MODE_NORMAL,
+                    Adafruit_BME280::SAMPLING_X2,
+                    Adafruit_BME280::SAMPLING_X2,
+                    Adafruit_BME280::SAMPLING_X2,
+                    Adafruit_BME280::FILTER_X16,
+                    Adafruit_BME280::STANDBY_MS_0_5);
   }
-#if DEBUG
-  Serial.println("BME280 succesvol geïnitialiseerd!");
-#endif
-  bme.setSampling(Adafruit_BME280::MODE_NORMAL,
-                  Adafruit_BME280::SAMPLING_X2,      // Temperatuur
-                  Adafruit_BME280::SAMPLING_X2,      // Druk
-                  Adafruit_BME280::SAMPLING_X2,      // Vochtigheid
-                  Adafruit_BME280::FILTER_X16,       // Filter
-                  Adafruit_BME280::STANDBY_MS_0_5);  // Standby-tijd
 
   initializeSPI();
   if (!initializeSDCard()) {
-#if DEBUG
-    Serial.println("Critical: SD card failed to initialize, no backup available!");
-#endif
-    while (1); // Stop de uitvoering
+    #if DEBUG
+      Serial.println("SD-kaart initialisatie mislukt, ga verder zonder SD-kaart.");
+    #endif
+  } else {
+    writeInitialLog();
   }
-  writeInitialLog();
+
+  esp_task_wdt_reset(); // Reset watchdog na setup
 }
 
 void processWeatherData() {
