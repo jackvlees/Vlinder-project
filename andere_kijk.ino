@@ -11,17 +11,16 @@
 struct Config {
   static constexpr const char* MQTT_SERVER = "mqtt.iot-ap.be";
   static constexpr int MQTT_PORT = 1883;
-  static constexpr int MQTT_TIMEOUT = 30000; // 30 seconden
+  static constexpr int MQTT_TIMEOUT = 30000;  // 30 seconden
   static constexpr int RX_PIN = 44;
   static constexpr int TX_PIN = 43;
   static constexpr int DE_RE_PIN = 4;
   static constexpr int SDA_PIN = 8;
   static constexpr int SCL_PIN = 9;
-  static constexpr int CS_PIN = 10; // Voor SD-kaart
-  static constexpr int BME280_ADDRESS = 0x77;
+  static constexpr int CS_PIN = 10;  // Voor SD-kaart
   static constexpr int MAX_PUBLISH_FAILS = 5;
   static constexpr int MAX_RETRIES = 3;
-  static constexpr int WATCHDOG_TIMEOUT = 10; // 10 seconden
+  static constexpr int WATCHDOG_TIMEOUT = 10;  // 10 seconden
   static constexpr const char* MQTT_CLIENT_ID = "em7IYh75xhnrEI7OTkr03FWm";
 };
 
@@ -58,23 +57,24 @@ struct WeatherData {
     int readings = 0;
   } averages;
 
-  int windDirHistogram[36] = {0};
+  int windDirHistogram[36] = { 0 };
 };
 
 // Sensorbeheer
 class SensorManager {
 public:
-  SensorManager(HardwareSerial& rs485Serial) : rs485Serial(rs485Serial) {}
+  SensorManager(HardwareSerial& rs485Serial)
+    : rs485Serial(rs485Serial) {}
 
   bool begin() {
     Wire.begin(Config::SDA_PIN, Config::SCL_PIN);
     rs485Serial.begin(4800, SERIAL_8N1, Config::RX_PIN, Config::TX_PIN);
     pinMode(Config::DE_RE_PIN, OUTPUT);
-    digitalWrite(Config::DE_RE_PIN, LOW); // Ontvangstmodus
+    digitalWrite(Config::DE_RE_PIN, LOW);  // Ontvangstmodus
 
     // Probeer BME280 te initialiseren
     int retries = 0;
-    while (!bme.begin(Config::BME280_ADDRESS) && retries < Config::MAX_RETRIES) {
+    while (!bme.begin(BME280_ADDRESS) && retries < Config::MAX_RETRIES) {
 #if DEBUG
       Serial.println("BME280 initialisatie mislukt, opnieuw proberen...");
 #endif
@@ -97,13 +97,14 @@ public:
 #if DEBUG
     Serial.println("BME280 succesvol geïnitialiseerd!");
 #endif
+    bmeInitialized = true;
     return true;
   }
 
   void readWeatherData(WeatherData& data) {
     if (rs485Serial.available() < 6) return;
 
-    unsigned char wxdata[8] = {0};
+    unsigned char wxdata[8] = { 0 };
     for (uint8_t i = 0; i < 6; i++) {
       wxdata[i] = rs485Serial.read();
     }
@@ -139,10 +140,10 @@ public:
 
     // Verwerk gegevens op basis van type
     switch (wxdata[0] >> 4) {
-      case 5: // Regenintensiteit
+      case 5:  // Regenintensiteit
         data.rainRate = (wxdata[4] & 0x40) ? 11520.0 / (((wxdata[4] & 0x30) / 16 * 250) + wxdata[3]) : 720.0 / (((wxdata[4] & 0x30) / 16 * 250) + wxdata[3]);
         break;
-      case 8: // Temperatuur
+      case 8:  // Temperatuur
         data.temperature = (((wxdata[3] * 0xff + wxdata[4]) / 160.0) - 32.0) / 1.8;
         if (data.temperature < -20 || data.temperature > 60) {
           data.temperature = data.averages.temp;
@@ -151,10 +152,10 @@ public:
 #endif
         }
         break;
-      case 9: // Windstoot
+      case 9:  // Windstoot
         data.windGust = wxdata[3] * 1.609;
         break;
-      case 10: // Luchtvochtigheid
+      case 10:  // Luchtvochtigheid
         data.humidity = (((wxdata[4] >> 4) << 8) + wxdata[3]) / 10.0;
         if (data.humidity < 0 || data.humidity > 100) {
           data.humidity = data.averages.humid;
@@ -163,7 +164,7 @@ public:
 #endif
         }
         break;
-      case 14: // Regen (totaal)
+      case 14:  // Regen (totaal)
         data.rain = wxdata[3];
         break;
       default:
@@ -200,7 +201,9 @@ public:
     while (rs485Serial.available()) rs485Serial.read();
   }
 
-  bool bmeOk() const { return bmeInitialized; }
+  bool bmeOk() const {
+    return bmeInitialized;
+  }
 
 private:
   Adafruit_BME280 bme;
@@ -350,16 +353,9 @@ public:
   }
 
   bool publishData(const WeatherData& data) {
-    String payload = "{\"temp\":" + String(data.temperature, 1) +
-                     ",\"humid\":" + String(data.humidity, 1) +
-                     ",\"pressure\":" + String(data.pressure) +
-                     ",\"windSpeed\":" + String(data.windSpeed, 1) +
-                     ",\"windDir\":" + String(data.windDirection) +
-                     ",\"rain\":" + String(data.rain) +
-                     ",\"windGust\":" + String(data.windGust, 1) +
-                     ",\"blackGlobe\":" + String(data.blackGlobe, 1) + "}";
+    String payload = "{\"temp\":" + String(data.temperature, 1) + ",\"humid\":" + String(data.humidity, 1) + ",\"pressure\":" + String(data.pressure) + ",\"windSpeed\":" + String(data.windSpeed, 1) + ",\"windDir\":" + String(data.windDirection) + ",\"rain\":" + String(data.rain) + ",\"windGust\":" + String(data.windGust, 1) + ",\"blackGlobe\":" + String(data.blackGlobe, 1) + "}";
     bool success = modem.mqttPublish((String(Config::MQTT_CLIENT_ID) + "/data").c_str(),
-                                    (uint8_t*)payload.c_str(), payload.length());
+                                     (uint8_t*)payload.c_str(), payload.length());
     if (!success) {
       publishFailCount++;
 #if DEBUG
@@ -380,8 +376,7 @@ public:
 
   bool lteConnected() {
     WalterModemNetworkRegState regState = modem.getNetworkRegState();
-    return (regState == WALTER_MODEM_NETWORK_REG_REGISTERED_HOME ||
-            regState == WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING);
+    return (regState == WALTER_MODEM_NETWORK_REG_REGISTERED_HOME || regState == WALTER_MODEM_NETWORK_REG_REGISTERED_ROAMING);
   }
 
 private:
@@ -530,12 +525,18 @@ void setup() {
 
 #if DEBUG
   Serial.begin(115200);
-  while (!Serial);
+  while (!Serial)
+    ;
   Serial.println("Setup gestart...");
 #endif
 
   // Initialiseer watchdog
-  esp_task_wdt_init(Config::WATCHDOG_TIMEOUT, true);
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = Config::WATCHDOG_TIMEOUT * 1000,  // Convert to milliseconds
+    .idle_core_mask = 0,                            // Apply to all cores
+    .trigger_panic = true                           // Trigger panic on timeout
+  };
+  esp_task_wdt_init(&wdt_config);
   esp_task_wdt_add(NULL);
 
   // Initialiseer componenten
@@ -565,7 +566,9 @@ void loop() {
         if (health.sdCardOk) {
           storageManager.logData(weather, millis());
         }
-        lastUpdate = millis();
+
+
+        $0 lastUpdate = millis();
       }
       break;
     case SystemState::ERROR:
@@ -588,5 +591,5 @@ void loop() {
       break;
   }
 
-  delay(100); // Korte pauze om CPU te sparen
+  delay(100);  // Korte pauze om CPU te sparen
 }
