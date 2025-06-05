@@ -1,11 +1,10 @@
-#include <HardwareSerial.h>
+#include <HardwareSerial.h>Add commentMore actions
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 #include <WalterModem.h>
 #include <esp_mac.h>
 #include <SPI.h>
 #include <SD.h>
-#include <esp_task_wdt.h>
 
 // BME280 instantie
 Adafruit_BME280 bme;
@@ -18,15 +17,12 @@ WalterModemRsp rsp;  // Response model
 #define TX_PIN 43     // TX-pin voor HardwareSerial
 #define DE_RE_PIN 4   // Data Enable/Receive Enable pin voor RS485-module
 
-#define DEBUG 1 // Comment this line to disable debug output
+#define DEBUG 0 // Comment this line to disable debug output
 // Standaard I2C-adres van BME280
 #define BME280_ADDRESS 0x77
 
 #define SDA_PIN 8
 #define SCL_PIN 9
-
-// Nieuwe constante voor maximale mislukte publicaties
-#define MAX_PUBLISH_FAILS 5  // Maximaal aantal mislukte publicaties voordat reset
 
 // HardwareSerial voor RS485-communicatie
 HardwareSerial RS485Serial(1);
@@ -175,15 +171,6 @@ void resetModem() {
   }
 }
 
-// Nieuwe functie om het apparaat te herstarten
-void restartDevice() {
-#if DEBUG
-  Serial.println("Too many connection failures, restarting device...");
-#endif
-  delay(1000); // Korte vertraging om debug-berichten te verzenden
-  ESP.restart(); // Voer een softwarematige herstart uit
-}
-
 bool lteConnected() {  // Controleer verbinding met LTE-netwerk
   WalterModemNetworkRegState regState = modem.getNetworkRegState();
   return (regState == WALTER_MODEM_NETWORK_REG_REGISTERED_HOME || 
@@ -192,7 +179,7 @@ bool lteConnected() {  // Controleer verbinding met LTE-netwerk
 
 bool waitForNetwork() {  // Wacht op verbinding met LTE-netwerk
   int timeout = 0;
-  const int maxTimeout = 180000; // 3 minutes for faster recovery
+  const int maxTimeout = 180000; // Reduced to 3 minutes for faster recovery
   while (!lteConnected()) {
     delay(100);
     timeout += 100;
@@ -352,48 +339,37 @@ bool ensureMqttConnected() {  // Probeer verbinding te maken of opnieuw te verbi
 }
 
 void setup() {
-  // Wacht op hardwarestabilisatie
-  delay(5000);
-
+  // Start seriële communicatie voor debugging alleen als DEBUG is ingeschakeld
 #if DEBUG
   Serial.begin(115200);
   while (!Serial);  // Wacht tot seriële poort klaar is
   Serial.println("Setup gestart...");
 #endif
 
-  // Initialiseer watchdog
-  esp_task_wdt_init(10, true); // 10 seconden timeout
-  esp_task_wdt_add(NULL);
-
   esp_read_mac(incomingBuf, ESP_MAC_WIFI_STA);
   sprintf(macString, "walter%02X:%02X:%02X:%02X:%02X:%02X", incomingBuf[0],
           incomingBuf[1], incomingBuf[2], incomingBuf[3], incomingBuf[4],
           incomingBuf[5]);
 
-  // Modem initialisatie met retry-logica
-  int modemRetries = 0;
-  while (!WalterModem::begin(&Serial2) && modemRetries < 3) {
+  if (WalterModem::begin(&Serial2)) {
 #if DEBUG
-    Serial.println("Modem initialisatie mislukt, opnieuw proberen...");
+    Serial.println("Modem initialization OK");
 #endif
-    delay(2000);
-    modemRetries++;
-  }
-  if (modemRetries >= 3) {
+  } else {
 #if DEBUG
-    Serial.println("Modem initialisatie mislukt, herstart apparaat...");
+    Serial.println("Error: Modem initialization ERROR");
 #endif
-    restartDevice();
+    return;
   }
 
-  if (!lteConnect()) {
+  if (!lteConnect()) {  // Verbind met LTE-netwerk
 #if DEBUG
     Serial.println("Error: Could Not Connect to LTE");
 #endif
-    restartDevice();
+    return;
   }
 
-  if (modem.mqttConfig("em7IYh75xhnrEI7OTkr03FWm")) {
+  if (modem.mqttConfig("em7IYh75xhnrEI7OTkr03FWm")) {  // Configureer MQTT-client
 #if DEBUG
     Serial.println("MQTT configuration succeeded");
 #endif
@@ -401,16 +377,15 @@ void setup() {
 #if DEBUG
     Serial.println("Error: MQTT configuration failed");
 #endif
-    restartDevice();
+    return;
   }
 
-  if (!ensureMqttConnected()) {
+  if (!ensureMqttConnected()) {  // Verbind met MQTT-broker
 #if DEBUG
     Serial.println("Error: Initial MQTT connection failed");
 #endif
-    restartDevice();
+    return;
   }
-
   randomSeed(analogRead(0));  // Initialiseer random seed
 
   // Start I2C
@@ -429,39 +404,31 @@ void setup() {
   Serial.println("RS485 in ontvangstmodus");
 #endif
 
-  // Probeer BME280 te initialiseren
   if (!bme.begin(BME280_ADDRESS)) {
 #if DEBUG
-    Serial.println("BME280 niet gevonden! Probeer opnieuw...");
+    Serial.println("BME280 niet gevonden! Controleer bedrading of I2C-adres.");
+    Serial.println("Probeer adres 0x76 als 0x77 niet werkt.");
 #endif
-    delay(2000);
-    if (!bme.begin(BME280_ADDRESS)) {
-#if DEBUG
-      Serial.println("BME280 initialisatie mislukt, ga verder zonder sensor.");
-#endif
-    }
-  } else {
-#if DEBUG
-    Serial.println("BME280 succesvol geïnitialiseerd!");
-#endif
-    bme.setSampling(Adafruit_BME280::MODE_NORMAL,
-                    Adafruit_BME280::SAMPLING_X2,
-                    Adafruit_BME280::SAMPLING_X2,
-                    Adafruit_BME280::SAMPLING_X2,
-                    Adafruit_BME280::FILTER_X16,
-                    Adafruit_BME280::STANDBY_MS_0_5);
+    while (1);  // Stop bij fout
   }
+#if DEBUG
+  Serial.println("BME280 succesvol geïnitialiseerd!");
+#endif
+  bme.setSampling(Adafruit_BME280::MODE_NORMAL,
+                  Adafruit_BME280::SAMPLING_X2,      // Temperatuur
+                  Adafruit_BME280::SAMPLING_X2,      // Druk
+                  Adafruit_BME280::SAMPLING_X2,      // Vochtigheid
+                  Adafruit_BME280::FILTER_X16,       // Filter
+                  Adafruit_BME280::STANDBY_MS_0_5);  // Standby-tijd
 
   initializeSPI();
   if (!initializeSDCard()) {
 #if DEBUG
-    Serial.println("SD-kaart initialisatie mislukt, ga verder zonder SD-kaart.");
+    Serial.println("Critical: SD card failed to initialize, no backup available!");
 #endif
-  } else {
-    writeInitialLog();
+    while (1); // Stop de uitvoering
   }
-
-  esp_task_wdt_reset(); // Reset watchdog na setup
+  writeInitialLog();
 }
 
 void processWeatherData() {
@@ -638,13 +605,7 @@ void processWeatherData() {
     Serial.print("Publish failure count: ");
     Serial.println(publishFailCount);
 #endif
-    if (publishFailCount >= MAX_PUBLISH_FAILS) {
-#if DEBUG
-      Serial.println("Maximum publish failures reached, restarting device...");
-#endif
-      writePeriodicLog(millis()); // Schrijf naar SD-kaart voordat we resetten
-      restartDevice(); // Start het apparaat opnieuw
-    } else if (publishFailCount >= 3) {
+    if (publishFailCount >= 3) {
 #if DEBUG
       Serial.println("Too many publish failures, attempting MQTT reconnect...");
 #endif
@@ -672,6 +633,5 @@ void loop() {
     }
     lastUpdate = millis();
   }
-  esp_task_wdt_reset(); // Reset watchdog in de loop
   delay(100); // Kortere delay om CPU te sparen
 }
