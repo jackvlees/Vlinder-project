@@ -1,4 +1,4 @@
-#include <HardwareSerial.h>Add commentMore actions
+#include <HardwareSerial.h>
 #include <Wire.h>
 #include <Adafruit_BME280.h>
 #include <WalterModem.h>
