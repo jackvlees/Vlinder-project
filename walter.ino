@@ -19,7 +19,7 @@ WalterModemRsp rsp;  // Response model
 
 #define DEBUG 0 // Comment this line to disable debug output
 // Standaard I2C-adres van BME280
-#define BME280_ADDRESS 0x77
+#define BME280_ADDRESS 0x77 // of 0x76
 
 #define SDA_PIN 8
 #define SCL_PIN 9
