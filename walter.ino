@@ -6,6 +6,9 @@
 #include <SPI.h>
 #include <SD.h>
 
+// Definieer het MQTT-basistopic als variabele
+const char* MQTT_BASE_TOPIC = "em7IYh75xhnrEI7OTkr03FWm";
+
 // BME280 instantie
 Adafruit_BME280 bme;
 
@@ -369,7 +372,7 @@ void setup() {
     return;
   }
 
-  if (modem.mqttConfig("em7IYh75xhnrEI7OTkr03FWm")) {  // Configureer MQTT-client
+  if (modem.mqttConfig(MQTT_BASE_TOPIC)) {  // Configureer MQTT-client
 #if DEBUG
     Serial.println("MQTT configuration succeeded");
 #endif
@@ -532,11 +535,14 @@ void processWeatherData() {
   Serial.println(" Pa");
 #endif
 
-  // Publiceer naar MQTT
+  // Publiceer naar MQTT met variabele topics
   bool publishSuccess = true;
   char outgoingMsg[64];
+  char topic[128];
+
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%.1f", weather.temperature);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/temperature", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/temperature", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish temperature failed");
 #endif
@@ -544,7 +550,8 @@ void processWeatherData() {
   }
 
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%.1f", weather.humidity);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/humidity", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/humidity", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish humidity failed");
 #endif
@@ -552,7 +559,8 @@ void processWeatherData() {
   }
 
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%d", weather.pressure);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/pressure", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/pressure", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish pressure failed");
 #endif
@@ -560,7 +568,8 @@ void processWeatherData() {
   }
 
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%.1f", weather.windSpeed);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/windSpeed", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/windSpeed", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish windSpeed failed");
 #endif
@@ -568,7 +577,8 @@ void processWeatherData() {
   }
 
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%d", weather.windDirection);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/windDirection", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/windDirection", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish windDirection failed");
 #endif
@@ -576,7 +586,8 @@ void processWeatherData() {
   }
 
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%d", weather.rain);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/rain", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/rain", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish rain failed");
 #endif
@@ -584,7 +595,8 @@ void processWeatherData() {
   }
 
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%.1f", weather.windGust);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/windGust", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/windGust", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish windGust failed");
 #endif
@@ -592,7 +604,8 @@ void processWeatherData() {
   }
 
   snprintf(outgoingMsg, sizeof(outgoingMsg), "%.1f", weather.blackGlobe);
-  if (!modem.mqttPublish("em7IYh75xhnrEI7OTkr03FWm/blackGlobe", (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
+  snprintf(topic, sizeof(topic), "%s/blackGlobe", MQTT_BASE_TOPIC);
+  if (!modem.mqttPublish(topic, (uint8_t *)outgoingMsg, strlen(outgoingMsg))) {
 #if DEBUG
     Serial.println("MQTT publish blackGlobe failed");
 #endif
